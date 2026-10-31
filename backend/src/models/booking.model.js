@@ -40,8 +40,26 @@ const bookingSchema = new Schema({
     },
     status : {
         type: String,
-        enum: ["PENDING_APPROVAL", "APPROVED", "REJECTED","RETURNED","CANCELLED","CHECKED_IN","OVERDUE"],
+        enum: ["PENDING_APPROVAL", "APPROVED", "REJECTED","RETURNED","CANCELLED","CHECKED_IN","OVERDUE", "WAITLISTED"],
         default: "PENDING_APPROVAL"
+    },
+    isWaitlisted : {
+        type: Boolean,
+        default: false
+    },
+    waitlistPosition : {
+        type: Number,
+        default: 0
+    },
+    originalRequestedStartDate : {
+        type: Date
+    },
+    originalRequestedEndDate : {
+        type: Date
+    },
+    queuedAfterBookingId : {
+        type: Schema.Types.ObjectId,
+        ref: "Booking"
     },
     rejectionReason : {
         type : String,

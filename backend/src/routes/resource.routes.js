@@ -15,7 +15,7 @@ import { verifyJWT } from "../middlewares/auth.middleware.js";
 const router = Router();
 
 router.route("/").get(getAllResources);
-router.route("/:resourceId").get(getResourceById);
+router.route("/my-resources").get(verifyJWT, getMyResources);
 
 router.route("/create").post(
     verifyJWT,
@@ -26,7 +26,7 @@ router.route("/create").post(
     createResource
 );
 
-router.route("/my-resources").get(verifyJWT, getMyResources);
+router.route("/:resourceId").get(getResourceById);
 
 router.route("/update/:resourceId").patch(
     verifyJWT,

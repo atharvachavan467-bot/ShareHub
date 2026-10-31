@@ -68,12 +68,27 @@ const createIncident = asyncHandler(async (req, res) => {
         { new: true }
     );
 
-    if (["HIGH", "CRITICAL"].includes(severity)) {
-        const deduction = severity === "CRITICAL" ? 20 : 10;
-        await User.findByIdAndUpdate(
-            booking.owner,
-            { $inc: { trustScore: -deduction } }
-        );
+    // Determine who the report is against:
+    // If reportedBy is borrower, target is resource.ownerId
+    // If reportedBy is owner, target is booking.owner (borrower)
+    const reporterIdStr = userId.toString();
+    const isBorrowerReporter = booking.owner.toString() === reporterIdStr;
+    const targetUserId = isBorrowerReporter ? resource.ownerId : booking.owner;
+
+    // Deduct points from the person on whom the report is reported
+    const deductionMap = {
+        CRITICAL: 25,
+        HIGH: 15,
+        MEDIUM: 10,
+        LOW: 5
+    };
+    const deduction = deductionMap[severity] || 10;
+
+    const targetUser = await User.findById(targetUserId);
+    if (targetUser) {
+        const currentScore = targetUser.trustScore !== undefined ? targetUser.trustScore : 100;
+        const newScore = Math.max(0, currentScore - deduction);
+        await User.findByIdAndUpdate(targetUserId, { trustScore: newScore });
     }
 
     await logAudit({
@@ -81,7 +96,7 @@ const createIncident = asyncHandler(async (req, res) => {
         action: "INCIDENT_REPORTED",
         bookingId: booking._id,
         resourceId: booking.resouceId,
-        notes: `Incident [${type}] reported with severity ${severity}: ${description}`
+        notes: `Incident [${type}] reported (${severity}). Deducted ${deduction} trust points from ${isBorrowerReporter ? "owner" : "borrower"}. Description: ${description}`
     });
 
     return res.status(201).json(

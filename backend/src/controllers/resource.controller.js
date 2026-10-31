@@ -1,6 +1,7 @@
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { Resource } from "../models/resource.model.js";
 import { Booking } from "../models/booking.model.js";
+import { User } from "../models/user.model.js";
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponce } from "../utils/ApiRespoce.js";
 import { uploadOnCloudinary } from "../utils/cloudinary.js";
@@ -81,18 +82,22 @@ const createResource = asyncHandler(async (req, res) => {
         image: imageUrls,
         location: parsedLocation,
         pricingType,
-        pricePerUnit,
-        securityDeposit,
+        pricePerUnit: Number(pricePerUnit),
+        securityDeposit: Number(securityDeposit),
         termsAndCondition,
         termsDocs: termsDocUrl,
         requiredQualification: parsedQualifications,
-        requireSupervision: requireSupervision || false,
-        maxBookingDays
+        requireSupervision: requireSupervision === true || requireSupervision === "true",
+        maxBookingDays: Number(maxBookingDays)
     });
 
     if (!resource) {
         throw new ApiError(500, "Something went wrong while creating the resource");
     }
+
+    await User.findByIdAndUpdate(req.user._id, {
+        $push: { resources: resource._id }
+    });
 
     return res.status(201).json(
         new ApiResponce(200, "Resource created successfully", resource)

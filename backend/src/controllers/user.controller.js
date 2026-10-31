@@ -23,17 +23,19 @@ const generateRefreshtokenAndAccessToken = async(userId) => {
 
 const registerUser = asyncHandler(async (req,res) => {
 
-    const {username, email,password,fullname , IdentityNumber} = req.body
+    const {username, email,password,fullname , IdentityNumber, role} = req.body
     
-    if(
-        [username,email,password,fullname,IdentityNumber].some((field) => field?.trim() ==="")
-    ){
-        throw new ApiError(400,"All fields are required");
+    if (
+        [username, email, password, fullname, IdentityNumber].some(
+            (field) => field === undefined || field === null || field?.toString().trim() === ""
+        )
+    ) {
+        throw new ApiError(400, "All fields are required");
     }
     
     const requiredUser = await User.findOne({
-        $or : [{username},{email}]
-    })
+        $or: [{ username: username.toLowerCase() }, { email: email.toLowerCase() }]
+    });
 
     if(requiredUser){
         throw new ApiError(409, "User with email or username already exists")
@@ -43,7 +45,7 @@ const registerUser = asyncHandler(async (req,res) => {
     if(!avatarlocalpath){
         throw new ApiError(400, "Avatar is required");
     }
-    let coverimagelocalpath=req.files?.coverImage[0]?.path
+    let coverimagelocalpath = req.files?.coverImage?.[0]?.path;
 
     const avatar = await uploadOnCloudinary(avatarlocalpath)
     const coverImage = await uploadOnCloudinary(coverimagelocalpath)
@@ -59,7 +61,8 @@ const registerUser = asyncHandler(async (req,res) => {
         username : username.toLowerCase(),
         email,
         IdentityNumber,
-        password
+        password,
+        role: role || "USER"
     })
 
     const createdUser = await User.findById(user._id).select("-password -refreshToken")
@@ -80,16 +83,22 @@ const loginUser = asyncHandler(async (req,res) => {
     //password check
     //access and referesh token
     //send cookie
-    const {email,username, password} = req.body
+    const {email, username, password} = req.body;
     if(!username && !email){
-        throw new ApiError(400, "username and email is necessary for login")
+        throw new ApiError(400, "Username or email is required for login");
     }
 
+    const identifier = (email || username || "").trim().toLowerCase();
     const user = await User.findOne({
-        $or : [{username}, {email}]
-    })
+        $or: [
+            { username: identifier },
+            { email: identifier },
+            ...(username ? [{ username: username.trim().toLowerCase() }, { email: username.trim().toLowerCase() }] : []),
+            ...(email ? [{ email: email.trim().toLowerCase() }, { username: email.trim().toLowerCase() }] : [])
+        ]
+    });
     if(!user){
-        throw new ApiError(400,"User not found")
+        throw new ApiError(400,"User not found");
     }
 
     const isPasswordValid = await user.isPasswordCorrect(password)
@@ -102,7 +111,7 @@ const loginUser = asyncHandler(async (req,res) => {
 
     const option = {
         httpOnly : true,
-        secure : true
+        secure : process.env.NODE_ENV === "production"
     }
 
     return res
@@ -136,7 +145,7 @@ const logoutUser = asyncHandler(async (req,res) => {
     )
     const option = {
         httpOnly : true,
-        secure : true
+        secure : process.env.NODE_ENV === "production"
     }
 
     return res
@@ -244,6 +253,74 @@ const getCurrentUser = asyncHandler(async (req,res) => {
     .json(new ApiResponce(200,req.user,"Current user fetched successfully"))
 })
 
+const inspectUserProfile = asyncHandler(async (req, res) => {
+    const { userId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+        throw new ApiError(400, "Invalid user ID");
+    }
+
+    const user = await User.findById(userId).select("-password -refreshToken");
+    if (!user) {
+        throw new ApiError(404, "User not found");
+    }
+
+    const { Booking } = await import("../models/booking.model.js");
+    const { Incident } = await import("../models/IncidentReport.model.js");
+    const { Qualification } = await import("../models/userqualification.model.js");
+
+    const borrowerBookings = await Booking.find({ owner: userId })
+        .populate("resouceId", "title image category pricingType pricePerUnit")
+        .sort({ createdAt: -1 });
+
+    const totalBookings = borrowerBookings.length;
+    const completedBookings = borrowerBookings.filter(b => b.status === "RETURNED").length;
+    const overdueBookings = borrowerBookings.filter(b => b.status === "OVERDUE").length;
+    const activeBookings = borrowerBookings.filter(b => ["APPROVED", "CHECKED_IN"].includes(b.status)).length;
+
+    const qualifications = await Qualification.find({ userid: userId })
+        .populate("verifiedBy", "fullname username")
+        .sort({ createdAt: -1 });
+
+    const bookingIds = borrowerBookings.map(b => b._id);
+    const incidents = await Incident.find({
+        $or: [
+            { bookingId: { $in: bookingIds } },
+            { reportedBy: userId }
+        ]
+    })
+    .populate("resourceId", "title image")
+    .populate("reportedBy", "fullname username avatar")
+    .sort({ createdAt: -1 });
+
+    // Separate incidents into penalties reported against borrower vs reported by borrower
+    const penalties = incidents.filter(inc => {
+        const isBookingIncident = bookingIds.some(bId => bId.toString() === inc.bookingId.toString());
+        const reporterId = inc.reportedBy?._id ? inc.reportedBy._id.toString() : inc.reportedBy?.toString();
+        return isBookingIncident && reporterId !== userId.toString();
+    });
+
+    const totalPenaltyAmount = penalties.reduce((sum, item) => sum + (item.penaltyAmount || 0), 0);
+
+    return res.status(200).json(
+        new ApiResponce(200, "User profile inspection data fetched", {
+            user,
+            stats: {
+                totalBookings,
+                completedBookings,
+                overdueBookings,
+                activeBookings,
+                totalPenalties: penalties.length,
+                totalPenaltyAmount
+            },
+            qualifications,
+            bookings: borrowerBookings,
+            incidents,
+            penalties
+        })
+    );
+});
+
 export {
     registerUser, 
     loginUser,
@@ -251,5 +328,6 @@ export {
     updateUserAvatar,
     changePassword,
     updateDetails,
-    getCurrentUser
+    getCurrentUser,
+    inspectUserProfile
 };

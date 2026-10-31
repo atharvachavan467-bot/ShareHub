@@ -6,7 +6,8 @@ import {
      updateUserAvatar,
      changePassword,
      updateDetails,
-     getCurrentUser
+     getCurrentUser,
+     inspectUserProfile
 } from "../controllers/user.controller.js";
 
 import { maxHeaderSize } from "http";
@@ -34,6 +35,7 @@ router.route("/register").post(
     router.route("/change-password").post(verifyJWT,changePassword)
     router.route("/update-details").post(verifyJWT,updateDetails)
     router.route("/get_user").get(verifyJWT,getCurrentUser)
+    router.route("/inspect/:userId").get(verifyJWT, inspectUserProfile)
 
     router.route("/update-avatar").post(verifyJWT,upload.single("avatar"),updateUserAvatar)
     

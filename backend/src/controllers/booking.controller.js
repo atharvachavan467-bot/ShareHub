@@ -8,8 +8,55 @@ import { ApiResponce } from "../utils/ApiRespoce.js";
 import { uploadOnCloudinary } from "../utils/cloudinary.js";
 import { logAudit } from "../utils/auditLogger.js";
 
+const advanceWaitlistForResource = async (resourceId, actorId) => {
+    try {
+        const nextWaitlist = await Booking.findOne({
+            resouceId: resourceId,
+            status: "WAITLISTED"
+        }).sort({ waitlistPosition: 1, createdAt: 1 });
+
+        if (!nextWaitlist) return;
+
+        const activeBooking = await Booking.findOne({
+            resouceId: resourceId,
+            status: { $in: ["APPROVED", "CHECKED_IN"] }
+        }).sort({ endDate: -1 });
+
+        const now = new Date();
+        const duration = new Date(nextWaitlist.endDate).getTime() - new Date(nextWaitlist.startDate).getTime();
+        let newStart = now;
+        if (activeBooking && new Date(activeBooking.endDate) > now) {
+            newStart = new Date(activeBooking.endDate);
+        }
+        const newEnd = new Date(newStart.getTime() + duration);
+
+        await Booking.findByIdAndUpdate(nextWaitlist._id, {
+            status: "PENDING_APPROVAL",
+            isWaitlisted: false,
+            waitlistPosition: 0,
+            startDate: newStart,
+            endDate: newEnd
+        });
+
+        await Booking.updateMany(
+            { resouceId: resourceId, status: "WAITLISTED" },
+            { $inc: { waitlistPosition: -1 } }
+        );
+
+        await logAudit({
+            actorId: actorId || nextWaitlist.owner,
+            action: "WAITLIST_ADVANCED",
+            bookingId: nextWaitlist._id,
+            resourceId: resourceId,
+            notes: `Waitlisted booking automatically promoted to PENDING_APPROVAL. Scheduled from ${newStart.toLocaleDateString()} to ${newEnd.toLocaleDateString()}.`
+        });
+    } catch (err) {
+        console.error("Error advancing waitlist:", err);
+    }
+};
+
 const bookRequestResource = asyncHandler(async(req,res) => {
-    const { resouceId, purpose, startDate, endDate } = req.body
+    const { resouceId, purpose, startDate, endDate } = req.body;
     const owner = req.user._id;
 
     if (
@@ -22,27 +69,90 @@ const bookRequestResource = asyncHandler(async(req,res) => {
         throw new ApiError(400, "startDate and endDate are required");
     }
 
-    const conflictingBooking = await Booking.findOne({
-        resouceId: resouceId,
-        status: { $in: ["APPROVED", "CHECKED_IN"] },
-        startDate: { $lt: new Date(endDate) },
-        endDate: { $gt: new Date(startDate) }
-    });
-
-    if (conflictingBooking) {
-        throw new ApiError(409, "Resource is already booked for the requested dates");
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    if (isNaN(start.getTime()) || isNaN(end.getTime()) || end <= start) {
+        throw new ApiError(400, "Valid startDate and endDate are required, with endDate after startDate");
     }
 
+    const durationMs = end.getTime() - start.getTime();
+
+    // Find any existing active, pending, or waitlisted bookings for this resource
+    const existingBookings = await Booking.find({
+        resouceId: resouceId,
+        status: { $in: ["APPROVED", "CHECKED_IN", "PENDING_APPROVAL", "WAITLISTED"] }
+    }).sort({ endDate: -1 });
+
+    // Check if any booking overlaps with requested window
+    const overlapping = existingBookings.filter(b => {
+        const bStart = new Date(b.startDate);
+        const bEnd = new Date(b.endDate);
+        return bStart < end && bEnd > start;
+    });
+
+    if (overlapping.length > 0) {
+        // Sequential waitlist: Find latest scheduled end date among all bookings
+        const maxEnd = existingBookings.reduce((latest, b) => {
+            const bEnd = new Date(b.endDate);
+            return bEnd > latest ? bEnd : latest;
+        }, end);
+
+        // Schedule next borrower right after person 1 completes
+        const queuedStart = new Date(maxEnd.getTime());
+        const queuedEnd = new Date(queuedStart.getTime() + durationMs);
+
+        const currentWaitlistCount = await Booking.countDocuments({
+            resouceId: resouceId,
+            status: "WAITLISTED"
+        });
+        const waitlistPos = currentWaitlistCount + 1;
+        const priorBooking = overlapping[0];
+
+        const bookedItem = await Booking.create({
+            resouceId,
+            purpose,
+            owner,
+            startDate: queuedStart,
+            endDate: queuedEnd,
+            originalRequestedStartDate: start,
+            originalRequestedEndDate: end,
+            status: "WAITLISTED",
+            isWaitlisted: true,
+            waitlistPosition: waitlistPos,
+            queuedAfterBookingId: priorBooking?._id
+        });
+
+        await logAudit({
+            actorId: owner,
+            action: "WAITLISTED",
+            bookingId: bookedItem._id,
+            resourceId: resouceId,
+            notes: `Resource occupied during requested dates. Placed in Waiting List #Position ${waitlistPos}. Scheduled from ${queuedStart.toLocaleDateString()} to ${queuedEnd.toLocaleDateString()} following prior borrower.`
+        });
+
+        return res.status(201).json(
+            new ApiResponce(
+                200,
+                `Resource has an overlapping reservation. You have been placed on the Waiting List (Position #${waitlistPos}). Scheduled to start sequentially on ${queuedStart.toLocaleDateString()}.`,
+                bookedItem
+            )
+        );
+    }
+
+    // No overlap - regular booking request
     const bookedItem = await Booking.create({
         resouceId,
         purpose,
         owner,
-        startDate,
-        endDate
-    })
+        startDate: start,
+        endDate: end,
+        status: "PENDING_APPROVAL",
+        isWaitlisted: false,
+        waitlistPosition: 0
+    });
 
     if (!bookedItem) {
-        throw new ApiError(500, "Something went wrong while booking request this resource")
+        throw new ApiError(500, "Something went wrong while booking request this resource");
     }
 
     await logAudit({
@@ -50,13 +160,13 @@ const bookRequestResource = asyncHandler(async(req,res) => {
         action: "BOOKING_REQUESTED",
         bookingId: bookedItem._id,
         resourceId: resouceId,
-        notes: `Booking requested from ${startDate} to ${endDate}. Purpose: ${purpose}`
+        notes: `Booking requested from ${start.toISOString()} to ${end.toISOString()}. Purpose: ${purpose}`
     });
 
     return res.status(201).json(
         new ApiResponce(200, "Request sent successfully", bookedItem)
     );
-})
+});
 
 const confirmBooking = asyncHandler(async(req,res) => {
     const { resouceId, status, bookingId } = req.body
@@ -112,6 +222,10 @@ const confirmBooking = asyncHandler(async(req,res) => {
             ? `Rejected. Reason: ${fieldToUpdate.rejectionReason}`
             : `Approved. Total price: ${fieldToUpdate.totalPrice}`
     });
+
+    if (status === "REJECTED") {
+        await advanceWaitlistForResource(resouceId, userid);
+    }
 
     return res.status(200).json(
         new ApiResponce(200, "Booking confirmation done", bookedItem)
@@ -314,11 +428,24 @@ const checkoutBooking = asyncHandler(async (req, res) => {
     }
 
     if (!isLate && conditionRating !== "DAMAGED") {
-        await User.findByIdAndUpdate(
-            booking.owner,
-            { $inc: { trustScore: 2 } }
-        );
+        const bonus = 5;
+        const borrower = await User.findById(booking.owner);
+        if (borrower) {
+            const currentScore = borrower.trustScore !== undefined ? borrower.trustScore : 100;
+            const newScore = Math.min(150, currentScore + bonus);
+            await User.findByIdAndUpdate(booking.owner, { trustScore: newScore });
+        }
+
+        await logAudit({
+            actorId: userId,
+            action: "ON_TIME_BONUS_AWARDED",
+            bookingId: bookingId,
+            resourceId: booking.resouceId,
+            notes: `Resource returned on time in ${conditionRating || "GOOD"} condition! +${bonus} bonus trust score points awarded to borrower.`
+        });
     }
+
+    await advanceWaitlistForResource(booking.resouceId, userId);
 
     await logAudit({
         actorId: userId,
@@ -329,7 +456,7 @@ const checkoutBooking = asyncHandler(async (req, res) => {
     });
 
     return res.status(200).json(
-        new ApiResponce(200, isLate ? "Booking returned (LATE)" : "Booking returned successfully", updatedBooking)
+        new ApiResponce(200, isLate ? "Booking returned (LATE)" : "Booking returned successfully (On-Time Bonus Awarded)", updatedBooking)
     );
 })
 
@@ -383,7 +510,7 @@ const getBookingsForOwner = asyncHandler(async (req, res) => {
     }
 
     const bookings = await Booking.find(filter)
-        .populate("owner", "fullname username avatar trustScore")
+        .populate("owner", "fullname username avatar trustScore email IdentityNumber isIdentityVerified")
         .populate("resouceId", "title image")
         .sort({ createdAt: -1 });
 
