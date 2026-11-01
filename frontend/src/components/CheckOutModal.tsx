@@ -45,9 +45,7 @@ export const CheckOutModal: React.FC<CheckOutModalProps> = ({
         formData.append("images", img);
       });
 
-      await api.post("/bookings/checkout", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
+      await api.post("/bookings/checkout", formData);
 
       if (conditionRating === "GOOD") {
         confetti({

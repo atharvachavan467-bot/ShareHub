@@ -70,11 +70,6 @@ export const CreateResourceModal: React.FC<CreateResourceModalProps> = ({
       return;
     }
 
-    if (!initialData && images.length === 0) {
-      toast.error("Please provide at least 1 image for the equipment asset.");
-      return;
-    }
-
     setIsSubmitting(true);
     try {
       const formData = new FormData();
@@ -82,20 +77,20 @@ export const CreateResourceModal: React.FC<CreateResourceModalProps> = ({
       formData.append("description", description.trim());
       formData.append("category", category);
       formData.append("pricingType", pricingType);
-      formData.append("pricePerUnit", pricePerUnit);
-      formData.append("securityDeposit", securityDeposit);
-      formData.append("termsAndCondition", termsAndCondition.trim());
-      formData.append("maxBookingDays", maxBookingDays);
+      formData.append("pricePerUnit", pricePerUnit || "0");
+      formData.append("securityDeposit", securityDeposit || "0");
+      formData.append("termsAndCondition", termsAndCondition.trim() || "Standard laboratory rules apply.");
+      formData.append("maxBookingDays", maxBookingDays || "7");
       formData.append("requireSupervision", String(requireSupervision));
 
       // CRITICAL BACKEND SERIALIZATION: Must be stringified JSON
       formData.append(
         "location",
         JSON.stringify({
-          firstLine: firstLine.trim(),
-          secondLine: secondLine.trim(),
-          country: country.trim(),
-          state: state.trim(),
+          firstLine: firstLine.trim() || "Main Campus Facility",
+          secondLine: secondLine.trim() || "",
+          state: state.trim() || "Main Campus",
+          country: country.trim() || "Institutional",
         })
       );
 
@@ -110,15 +105,11 @@ export const CreateResourceModal: React.FC<CreateResourceModalProps> = ({
       }
 
       if (initialData) {
-        await api.patch(`/resources/update/${initialData._id}`, formData, {
-          headers: { "Content-Type": "multipart/form-data" },
-        });
+        await api.patch(`/resources/update/${initialData._id}`, formData);
         toast.success("Resource successfully updated!");
       } else {
-        await api.post("/resources/create", formData, {
-          headers: { "Content-Type": "multipart/form-data" },
-        });
-        toast.success("New equipment successfully registered into inventory!");
+        await api.post("/resources/create", formData);
+        toast.success("New equipment successfully published to catalog!");
       }
 
       onSuccess();
@@ -268,31 +259,22 @@ export const CreateResourceModal: React.FC<CreateResourceModalProps> = ({
                 type="text"
                 value={firstLine}
                 onChange={(e) => setFirstLine(e.target.value)}
-                placeholder="Building / Address Line 1"
+                placeholder="Lab / Building / Room Location (e.g. Quantum Lab 301)"
                 required
-                className="w-full px-3 py-2 rounded-xl glass-input text-xs text-white"
+                className="w-full sm:col-span-2 px-3 py-2 rounded-xl glass-input text-xs text-white"
               />
               <input
                 type="text"
                 value={secondLine}
                 onChange={(e) => setSecondLine(e.target.value)}
-                placeholder="Room / Floor / Area (Optional)"
+                placeholder="Floor / Area / Bench # (Optional)"
                 className="w-full px-3 py-2 rounded-xl glass-input text-xs text-white"
               />
               <input
                 type="text"
                 value={state}
                 onChange={(e) => setState(e.target.value)}
-                placeholder="State / Province"
-                required
-                className="w-full px-3 py-2 rounded-xl glass-input text-xs text-white"
-              />
-              <input
-                type="text"
-                value={country}
-                onChange={(e) => setCountry(e.target.value)}
-                placeholder="Country"
-                required
+                placeholder="Department / Division (Optional)"
                 className="w-full px-3 py-2 rounded-xl glass-input text-xs text-white"
               />
             </div>

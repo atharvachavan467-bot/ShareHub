@@ -45,9 +45,7 @@ export const CheckInModal: React.FC<CheckInModalProps> = ({
         formData.append("images", img);
       });
 
-      await api.post("/bookings/pickup", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
+      await api.post("/bookings/pickup", formData);
 
       toast.success("Equipment checked in successfully! Status is now IN_USE.");
       onSuccess();

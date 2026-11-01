@@ -24,31 +24,46 @@ const createResource = asyncHandler(async (req, res) => {
 
     if (
         [title, description, category, pricingType, termsAndCondition].some(
-            (field) => !field || field?.trim() === ""
+            (field) => !field || field?.toString().trim() === ""
         )
     ) {
         throw new ApiError(400, "All required fields must be provided");
     }
 
-    if (!pricePerUnit || !securityDeposit || !maxBookingDays) {
+    if (
+        pricePerUnit === undefined || pricePerUnit === null || pricePerUnit === "" ||
+        securityDeposit === undefined || securityDeposit === null || securityDeposit === "" ||
+        maxBookingDays === undefined || maxBookingDays === null || maxBookingDays === ""
+    ) {
         throw new ApiError(400, "pricePerUnit, securityDeposit and maxBookingDays are required");
     }
 
     const imageLocalFiles = req.files?.images;
-    if (!imageLocalFiles || imageLocalFiles.length === 0) {
-        throw new ApiError(400, "At least one resource image is required");
+    let imageUrls = [];
+
+    if (imageLocalFiles && imageLocalFiles.length > 0) {
+        const uploadPromises = imageLocalFiles.map((file) =>
+            uploadOnCloudinary(file.path)
+        );
+        const uploadResults = await Promise.all(uploadPromises);
+        imageUrls = uploadResults
+            .filter((result) => result !== null)
+            .map((result) => result.secure_url || result.url);
     }
 
-    const uploadPromises = imageLocalFiles.map((file) =>
-        uploadOnCloudinary(file.path)
-    );
-    const uploadResults = await Promise.all(uploadPromises);
-    const imageUrls = uploadResults
-        .filter((result) => result !== null)
-        .map((result) => result.secure_url || result.url);
-
+    // Fallback if no images were attached or upload failed
     if (imageUrls.length === 0) {
-        throw new ApiError(500, "Failed to upload resource images");
+        if (req.body.images && Array.isArray(req.body.images) && req.body.images.length > 0) {
+            imageUrls = req.body.images;
+        } else if (typeof req.body.images === "string" && req.body.images.trim()) {
+            imageUrls = [req.body.images.trim()];
+        } else {
+            imageUrls = [
+                category === "SERVICE"
+                    ? "https://images.unsplash.com/photo-1581091226825-a6a2a5aee158?w=800&auto=format&fit=crop&q=80"
+                    : "https://images.unsplash.com/photo-1582719478250-c89cae4dc85b?w=800&auto=format&fit=crop&q=80"
+            ];
+        }
     }
 
     let termsDocUrl = "";
@@ -57,34 +72,61 @@ const createResource = asyncHandler(async (req, res) => {
         termsDocUrl = termsResult?.secure_url || termsResult?.url || "";
     }
 
-    let parsedLocation = location;
-    if (typeof location === "string") {
-        try {
-            parsedLocation = JSON.parse(location);
-        } catch (err) {
-            throw new ApiError(400, "Invalid location format. Send as JSON object.");
+    let parsedLocation = {
+        firstLine: "Main Campus Facility",
+        secondLine: "",
+        country: "Institutional Campus",
+        state: "Main Division"
+    };
+
+    if (location) {
+        if (typeof location === "string") {
+            try {
+                parsedLocation = JSON.parse(location);
+            } catch (err) {
+                parsedLocation = {
+                    firstLine: location.trim(),
+                    secondLine: "",
+                    country: "Institutional Campus",
+                    state: "Main Division"
+                };
+            }
+        } else if (typeof location === "object") {
+            parsedLocation = location;
         }
     }
-    let parsedQualifications = requiredQualification || [];
-    if (typeof requiredQualification === "string") {
-        try {
-            parsedQualifications = JSON.parse(requiredQualification);
-        } catch (err) {
-            parsedQualifications = [requiredQualification];
+
+    if (!parsedLocation.firstLine || parsedLocation.firstLine.trim() === "") {
+        parsedLocation.firstLine = typeof location === "string" && location.trim() ? location.trim() : "Main Campus Facility";
+    }
+
+    let parsedQualifications = [];
+    if (requiredQualification) {
+        if (typeof requiredQualification === "string") {
+            try {
+                parsedQualifications = JSON.parse(requiredQualification);
+            } catch (err) {
+                parsedQualifications = [requiredQualification];
+            }
+        } else if (Array.isArray(requiredQualification)) {
+            parsedQualifications = requiredQualification;
         }
+    }
+    if (!Array.isArray(parsedQualifications)) {
+        parsedQualifications = [String(parsedQualifications)];
     }
 
     const resource = await Resource.create({
         ownerId: req.user._id,
-        title,
-        description,
+        title: title.trim(),
+        description: description.trim(),
         category,
         image: imageUrls,
         location: parsedLocation,
         pricingType,
         pricePerUnit: Number(pricePerUnit),
         securityDeposit: Number(securityDeposit),
-        termsAndCondition,
+        termsAndCondition: termsAndCondition.trim(),
         termsDocs: termsDocUrl,
         requiredQualification: parsedQualifications,
         requireSupervision: requireSupervision === true || requireSupervision === "true",
@@ -245,7 +287,12 @@ const updateResource = asyncHandler(async (req, res) => {
             try {
                 parsedLocation = JSON.parse(location);
             } catch (err) {
-                throw new ApiError(400, "Invalid location format");
+                parsedLocation = {
+                    firstLine: location.trim(),
+                    secondLine: "",
+                    country: "Institutional Campus",
+                    state: "Main Division"
+                };
             }
         }
         fieldToUpdate.location = parsedLocation;

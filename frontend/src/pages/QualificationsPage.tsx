@@ -79,9 +79,7 @@ export const QualificationsPage: React.FC = () => {
       }
       formData.append("proofDocument", proofFile);
 
-      await api.post("/qualifications/submit", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
+      await api.post("/qualifications/submit", formData);
 
       toast.success("Qualification submitted! Forwarded to lab coordinators for review.");
       setIsSubmitOpen(false);

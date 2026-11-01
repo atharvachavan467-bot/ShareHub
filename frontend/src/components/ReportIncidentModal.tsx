@@ -46,9 +46,7 @@ export const ReportIncidentModal: React.FC<ReportIncidentModalProps> = ({
         formData.append("images", img);
       });
 
-      await api.post("/incidents/create", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
+      await api.post("/incidents/create", formData);
 
       toast.success("Incident filed. Logged to immutable audit trail.");
       onSuccess();
