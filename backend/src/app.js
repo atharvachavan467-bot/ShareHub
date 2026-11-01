@@ -30,6 +30,13 @@ app.use(cors({
 app.use(express.json({limit: "16kb"}))
 app.use(express.urlencoded({extended: true, limit: "16kb"}))
 
+// Ensure local public/temp directory exists safely in local development
+try {
+    if (!fs.existsSync("public/temp")) {
+        fs.mkdirSync("public/temp", { recursive: true });
+    }
+} catch {}
+
 // Serve temp static files with automatic PDF and Image MIME detection
 app.use("/temp", express.static("public/temp", {
     setHeaders: (res, filePath) => {

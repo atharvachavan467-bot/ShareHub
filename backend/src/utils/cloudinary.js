@@ -31,12 +31,48 @@ const uploadOnCloudinary = async (filePath) => {
             }
         }
 
-        // Fallback: Copy/keep in public/temp and serve locally via /temp/<filename>
+        // Fallback: If in Vercel or cloud environment, convert to Data URI for instant zero-dependency serving
+        if (process.env.VERCEL || process.env.NODE_ENV === "production" || !fs.existsSync('./public/temp')) {
+            try {
+                if (fs.existsSync(filePath)) {
+                    const ext = path.extname(filePath).toLowerCase();
+                    let mimeType = "application/octet-stream";
+                    if (ext === ".jpg" || ext === ".jpeg") mimeType = "image/jpeg";
+                    else if (ext === ".png") mimeType = "image/png";
+                    else if (ext === ".gif") mimeType = "image/gif";
+                    else if (ext === ".webp") mimeType = "image/webp";
+                    else if (ext === ".pdf") mimeType = "application/pdf";
+                    else if (ext === ".svg") mimeType = "image/svg+xml";
+
+                    const fileBuffer = fs.readFileSync(filePath);
+                    const base64Data = fileBuffer.toString("base64");
+                    const dataUri = `data:${mimeType};base64,${base64Data}`;
+                    try { fs.unlinkSync(filePath); } catch {}
+                    return {
+                        url: dataUri,
+                        secure_url: dataUri
+                    };
+                }
+            } catch (convErr) {
+                console.warn("Data URI conversion failed:", convErr);
+            }
+        }
+
+        // Local development static serving fallback
+        const localTempDir = path.resolve('./public/temp');
+        if (!fs.existsSync(localTempDir)) {
+            try { fs.mkdirSync(localTempDir, { recursive: true }); } catch {}
+        }
+
         const filename = `${Date.now()}_${path.basename(filePath)}`;
-        const targetPath = path.resolve('./public/temp', filename);
-        if (filePath !== targetPath) {
-            fs.copyFileSync(filePath, targetPath);
-            try { fs.unlinkSync(filePath); } catch {}
+        const targetPath = path.resolve(localTempDir, filename);
+        if (filePath !== targetPath && fs.existsSync(filePath)) {
+            try {
+                fs.copyFileSync(filePath, targetPath);
+                try { fs.unlinkSync(filePath); } catch {}
+            } catch (copyErr) {
+                console.warn("Could not copy to local temp directory:", copyErr.message);
+            }
         }
 
         const localUrl = `http://localhost:${process.env.PORT || 8000}/temp/${filename}`;
