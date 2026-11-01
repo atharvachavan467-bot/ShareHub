@@ -5,8 +5,25 @@ import fs from "fs";
 
 const app = express();
 
+const allowedOrigins = [
+    "https://share-hub-zeta.vercel.app",
+    "http://localhost:5173",
+    "http://localhost:3000",
+    process.env.CORS_ORIGIN
+].filter(Boolean);
+
 app.use(cors({
-    origin: process.env.CORS_ORIGIN || true,
+    origin: function(origin, callback) {
+        if (!origin) return callback(null, true);
+        if (
+            allowedOrigins.includes(origin) ||
+            origin.endsWith(".vercel.app") ||
+            process.env.NODE_ENV !== "production"
+        ) {
+            return callback(null, true);
+        }
+        return callback(null, true);
+    },
     credentials: true
 }));
 
@@ -47,6 +64,22 @@ app.use("/api/v1/resources",resourceRouter)
 app.use("/api/v1/bookings",bookingRouter)
 app.use("/api/v1/incidents",incidentRouter)
 app.use("/api/v1/qualifications",qualificationRouter)
+
+app.get("/", (req, res) => {
+    res.status(200).json({
+        success: true,
+        message: "ShareHub API Core Online (v1)",
+        timestamp: new Date().toISOString()
+    });
+});
+
+app.get("/api/v1/health", (req, res) => {
+    res.status(200).json({
+        success: true,
+        message: "ShareHub API Core Online (v1)",
+        timestamp: new Date().toISOString()
+    });
+});
 
 // Global error handler matching API contract
 app.use((err, req, res, next) => {

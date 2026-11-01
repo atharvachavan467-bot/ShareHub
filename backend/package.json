@@ -11,7 +11,9 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "dev": "nodemon -r dotenv/config src/index.js"
+    "dev": "nodemon -r dotenv/config src/index.js",
+    "start": "node src/index.js",
+    "build": "node -e 'console.log(\"Build complete\")'"
   },
   "devDependencies": {
     "mongodb-memory-server": "^11.3.0",
